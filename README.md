@@ -94,7 +94,8 @@ Notes:
 - Linear PCM (format 1) and IEEE float (format 3) WAV files are supported; other formats return an error.
 - Each file must be long enough for at least one 25 ms window (`round(0.025 * sampleRate)` samples); otherwise `FindOffset` returns an error.
 - The whole WAV must be at least as long as the chunk; shorter inputs return an error.
-- Analysis uses 25 ms Hamming windows with 10 ms hop, 26 mel filters, log energy, DCT-II (13 coeffs), shared cepstral mean/variance normalization using stats from the whole file (also applied to the chunk), per-frame L2 normalization (coeffs 1..12), and offset search ignores the 0th cepstral coefficient to stay gain-robust.
+- Analysis uses 25 ms Hamming windows with 10 ms hop, 26 mel filters, log filterbank energies (natural log), orthonormal DCT-II (13 coeffs), shared cepstral mean/variance normalization using stats from the whole file (also applied to the chunk), per-frame L2 normalization (coeffs 1..12), and offset search ignores the 0th cepstral coefficient to stay gain-robust.
+- Mel filters are spaced using the HTK mel scale (2595 * log10(1 + f/700)) with Slaney-style area normalization, and the power spectrum is treated as single-sided (non-DC/non-Nyquist bins are doubled).
 - Samples are mean-centered before optional pre-emphasis (default 0.97) and FFT analysis.
 - Multi-channel audio is averaged to mono before analysis.
 - MFCC/ASR 계산은 DefaultConfig를 사용하며, 필요하면 Config로 필터/계수/프레임 설정을 변경할 수 있다.

@@ -944,6 +944,57 @@ func TestComputeMFCC_SingleSidedSpectrum(t *testing.T) {
 	assert.InDeltaSlice(t, expected, extractor.powerSpectrum, 1e-12)
 }
 
+func TestComputeMFCC_ZeroSignal_OnlyC0HasEnergy(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	extractor, err := NewExtractor(16_000, DefaultConfig())
+	require.NoError(t, err)
+
+	samples := make([]float64, extractor.WindowSize())
+	mfccs, err := extractor.Calculate(samples)
+	require.NoError(t, err)
+	require.Len(t, mfccs, 1)
+	require.Len(t, mfccs[0], extractor.NumCoefficients())
+
+	for c := 1; c < extractor.NumCoefficients(); c++ {
+		assert.InDelta(t, 0.0, mfccs[0][c], 1e-9)
+	}
+}
+
+func TestComputeMFCC_ScalingAffectsOnlyC0(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	extractor, err := NewExtractor(16_000, DefaultConfig())
+	require.NoError(t, err)
+
+	samples := make([]float64, extractor.WindowSize())
+	r := rand.New(rand.NewSource(1))
+	for i := range samples {
+		samples[i] = r.Float64()*2 - 1
+	}
+
+	mfcc, err := extractor.Calculate(samples)
+	require.NoError(t, err)
+	require.Len(t, mfcc, 1)
+	require.Len(t, mfcc[0], extractor.NumCoefficients())
+
+	const scale = 0.25
+	scaled := make([]float64, len(samples))
+	for i := range scaled {
+		scaled[i] = samples[i] * scale
+	}
+
+	scaledMFCC, err := extractor.Calculate(scaled)
+	require.NoError(t, err)
+	require.Len(t, scaledMFCC, 1)
+	require.Len(t, scaledMFCC[0], extractor.NumCoefficients())
+
+	for c := 1; c < extractor.NumCoefficients(); c++ {
+		assert.InDelta(t, mfcc[0][c], scaledMFCC[0][c], 1e-9)
+	}
+	assert.Greater(t, math.Abs(mfcc[0][0]-scaledMFCC[0][0]), 1e-9)
+}
+
 func TestValidateMFCC_DetectsInvalidValue(t *testing.T) {
 	t.Cleanup(func() { goleak.VerifyNone(t) })
 
