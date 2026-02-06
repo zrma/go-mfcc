@@ -2,13 +2,14 @@ package mfcc
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
 
 	"github.com/go-audio/audio"
 	"github.com/go-audio/wav"
-	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 )
 
@@ -51,12 +52,12 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 	}
 
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return info, errors.Wrap(err, "rewind wav reader failed")
+		return info, fmt.Errorf("rewind wav reader failed: %w", err)
 	}
 
 	var header [12]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
-		return info, errors.Wrap(err, "read RIFF header failed")
+		return info, fmt.Errorf("read RIFF header failed: %w", err)
 	}
 	if string(header[:4]) != "RIFF" || string(header[8:12]) != "WAVE" {
 		return info, errors.New("not a RIFF/WAVE file")
@@ -68,12 +69,12 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 	for {
 		var chunkID [4]byte
 		if _, err := io.ReadFull(r, chunkID[:]); err != nil {
-			return info, errors.Wrap(err, "read chunk ID failed")
+			return info, fmt.Errorf("read chunk ID failed: %w", err)
 		}
 
 		var chunkSize uint32
 		if err := binary.Read(r, binary.LittleEndian, &chunkSize); err != nil {
-			return info, errors.Wrap(err, "read chunk size failed")
+			return info, fmt.Errorf("read chunk size failed: %w", err)
 		}
 		if chunkSize == 0 {
 			switch string(chunkID[:]) {
@@ -93,12 +94,12 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 
 		if string(chunkID[:]) == "fmt " {
 			if chunkSize > 1<<10 {
-				return info, errors.Errorf("fmt chunk too large: %d bytes", chunkSize)
+				return info, fmt.Errorf("fmt chunk too large: %d bytes", chunkSize)
 			}
 
 			buf := make([]byte, chunkSize)
 			if _, err := io.ReadFull(r, buf); err != nil {
-				return info, errors.Wrap(err, "read fmt chunk failed")
+				return info, fmt.Errorf("read fmt chunk failed: %w", err)
 			}
 			if len(buf) < 16 {
 				return info, errors.New("fmt chunk too short")
@@ -111,10 +112,10 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 				}
 				extraSize := binary.LittleEndian.Uint16(buf[16:18])
 				if extraSize < 22 {
-					return info, errors.Errorf("invalid extensible fmt chunk extra size: %d", extraSize)
+					return info, fmt.Errorf("invalid extensible fmt chunk extra size: %d", extraSize)
 				}
 				if len(buf) < 18+int(extraSize) {
-					return info, errors.Errorf("fmt chunk too short for extensible format: need %d bytes, got %d", 18+int(extraSize), len(buf))
+					return info, fmt.Errorf("fmt chunk too short for extensible format: need %d bytes, got %d", 18+int(extraSize), len(buf))
 				}
 				// WAVE_FORMAT_EXTENSIBLE stores valid bits (2 bytes), channel mask (4 bytes), and sub-format GUID (16 bytes)
 				info.validBitsPerSample = binary.LittleEndian.Uint16(buf[18:20])
@@ -124,7 +125,7 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 			foundFmt = true
 			if chunkSize%2 == 1 {
 				if _, err := r.Seek(1, io.SeekCurrent); err != nil {
-					return info, errors.Wrap(err, "skip fmt padding failed")
+					return info, fmt.Errorf("skip fmt padding failed: %w", err)
 				}
 			}
 			if foundData {
@@ -144,7 +145,7 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 				skip++
 			}
 			if _, err := r.Seek(skip, io.SeekCurrent); err != nil {
-				return info, errors.Wrap(err, "skip data chunk failed")
+				return info, fmt.Errorf("skip data chunk failed: %w", err)
 			}
 			continue
 		}
@@ -155,7 +156,7 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 		}
 
 		if _, err := r.Seek(skip, io.SeekCurrent); err != nil {
-			return info, errors.Wrap(err, "skip non-fmt chunk failed")
+			return info, fmt.Errorf("skip non-fmt chunk failed: %w", err)
 		}
 	}
 }
@@ -163,7 +164,7 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 func readWavFile(filepath string) (data []float64, sampleRate int, err error) {
 	file0, err := os.Open(filepath)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "open wav file failed")
+		return nil, 0, fmt.Errorf("open wav file failed: %w", err)
 	}
 	defer func() {
 		if err0 := file0.Close(); err0 != nil {
@@ -173,24 +174,24 @@ func readWavFile(filepath string) (data []float64, sampleRate int, err error) {
 
 	formatInfo, err := probeWavFormat(file0)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "parse wav format failed")
+		return nil, 0, fmt.Errorf("parse wav format failed: %w", err)
 	}
 	if _, err := file0.Seek(0, io.SeekStart); err != nil {
-		return nil, 0, errors.Wrap(err, "rewind wav file failed")
+		return nil, 0, fmt.Errorf("rewind wav file failed: %w", err)
 	}
 
 	decoder := wav.NewDecoder(file0)
 	if err := decoder.FwdToPCM(); err != nil {
-		return nil, 0, errors.Wrap(err, "decode wav header failed")
+		return nil, 0, fmt.Errorf("decode wav header failed: %w", err)
 	}
 
 	channels := int(decoder.NumChans)
 	if channels <= 0 {
-		return nil, 0, errors.Errorf("invalid channel count: %d", decoder.NumChans)
+		return nil, 0, fmt.Errorf("invalid channel count: %d", decoder.NumChans)
 	}
 	sampleRate = int(decoder.SampleRate)
 	if sampleRate <= 0 {
-		return nil, 0, errors.Errorf("invalid sample rate: %dHz", sampleRate)
+		return nil, 0, fmt.Errorf("invalid sample rate: %dHz", sampleRate)
 	}
 
 	audioFormat := formatInfo.audioFormat
@@ -204,17 +205,17 @@ func readWavFile(filepath string) (data []float64, sampleRate int, err error) {
 	case isFloat:
 		data, err = decodeFloatPCM(decoder, channels, int(formatInfo.dataChunkSize))
 		if err != nil {
-			return nil, 0, errors.Wrap(err, "decode float wav data failed")
+			return nil, 0, fmt.Errorf("decode float wav data failed: %w", err)
 		}
 		return data, sampleRate, nil
 	case isPCM:
 	default:
-		return nil, 0, errors.Errorf("unsupported wav format: code=%d subformat=%x", audioFormat, formatInfo.subFormat)
+		return nil, 0, fmt.Errorf("unsupported wav format: code=%d subformat=%x", audioFormat, formatInfo.subFormat)
 	}
 
 	buf, err := decoder.FullPCMBuffer()
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "decode wav file failed")
+		return nil, 0, fmt.Errorf("decode wav file failed: %w", err)
 	}
 
 	data, err = decodeIntPCMToMono(buf, formatInfo, channels, int(decoder.BitDepth))
@@ -241,11 +242,11 @@ func decodeIntPCMToMono(buf *audio.IntBuffer, formatInfo wavFormatInfo, channels
 	if formatInfo.dataChunkSize > 0 {
 		dataSize := int(formatInfo.dataChunkSize)
 		if dataSize%bytesPerSample != 0 {
-			return nil, errors.Errorf("wav data size (%d bytes) is not aligned to sample size (%d bytes)", dataSize, bytesPerSample)
+			return nil, fmt.Errorf("wav data size (%d bytes) is not aligned to sample size (%d bytes)", dataSize, bytesPerSample)
 		}
 		expectedSamples := dataSize / bytesPerSample
 		if expectedSamples > sampleCount {
-			return nil, errors.Errorf("wav data truncated: expected %d samples, got %d", expectedSamples, sampleCount)
+			return nil, fmt.Errorf("wav data truncated: expected %d samples, got %d", expectedSamples, sampleCount)
 		}
 		if expectedSamples < sampleCount {
 			buf.Data = buf.Data[:expectedSamples]
@@ -253,13 +254,13 @@ func decodeIntPCMToMono(buf *audio.IntBuffer, formatInfo wavFormatInfo, channels
 		}
 	}
 	if rem := sampleCount % channels; rem != 0 {
-		return nil, errors.Errorf("wav data length (%d samples) is not divisible by channel count (%d)", sampleCount, channels)
+		return nil, fmt.Errorf("wav data length (%d samples) is not divisible by channel count (%d)", sampleCount, channels)
 	}
 	frames := sampleCount / channels
 
 	validBits := int(formatInfo.validBitsPerSample)
 	if validBits > bitDepth {
-		return nil, errors.Errorf("valid bits per sample (%d) exceed bit depth (%d)", validBits, bitDepth)
+		return nil, fmt.Errorf("valid bits per sample (%d) exceed bit depth (%d)", validBits, bitDepth)
 	}
 	normalizerBits := bitDepth
 	unsignedPCM := bitDepth == 8
@@ -311,18 +312,18 @@ func decodeFloatPCM(decoder *wav.Decoder, channels int, dataChunkSize int) ([]fl
 	byteCount := decoder.PCMSize
 	if dataChunkSize > 0 {
 		if dataChunkSize > decoder.PCMSize {
-			return nil, errors.Errorf("wav data size (%d bytes) exceeds available PCM size (%d bytes)", dataChunkSize, decoder.PCMSize)
+			return nil, fmt.Errorf("wav data size (%d bytes) exceeds available PCM size (%d bytes)", dataChunkSize, decoder.PCMSize)
 		}
 		byteCount = dataChunkSize
 	}
 
 	pcmBytes := make([]byte, byteCount)
 	if _, err := io.ReadFull(decoder.PCMChunk, pcmBytes); err != nil {
-		return nil, errors.Wrap(err, "read PCM chunk failed")
+		return nil, fmt.Errorf("read PCM chunk failed: %w", err)
 	}
 
 	if rem := len(pcmBytes) % bytesPerFrame; rem != 0 {
-		return nil, errors.Errorf("wav data length (%d bytes) is not divisible by frame size (%d)", len(pcmBytes), bytesPerFrame)
+		return nil, fmt.Errorf("wav data length (%d bytes) is not divisible by frame size (%d)", len(pcmBytes), bytesPerFrame)
 	}
 	frames := len(pcmBytes) / bytesPerFrame
 
@@ -341,10 +342,10 @@ func decodeFloatPCM(decoder *wav.Decoder, channels int, dataChunkSize int) ([]fl
 			case 8:
 				sample = math.Float64frombits(binary.LittleEndian.Uint64(sampleBytes))
 			default:
-				return nil, errors.Errorf("unsupported float bit depth: %d", bitDepth)
+				return nil, fmt.Errorf("unsupported float bit depth: %d", bitDepth)
 			}
 			if math.IsNaN(sample) || math.IsInf(sample, 0) {
-				return nil, errors.Errorf("invalid float PCM sample at frame %d, channel %d", i, c)
+				return nil, fmt.Errorf("invalid float PCM sample at frame %d, channel %d", i, c)
 			}
 			sum += sample
 		}
