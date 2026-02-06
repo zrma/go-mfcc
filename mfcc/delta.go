@@ -1,9 +1,9 @@
 package mfcc
 
 import (
+	"errors"
+	"fmt"
 	"slices"
-
-	"github.com/pkg/errors"
 )
 
 const defaultDeltaWindow = 2
@@ -14,7 +14,7 @@ func ComputeDelta(features [][]float64, window int) ([][]float64, error) {
 		return nil, errors.New("no features to compute delta")
 	}
 	if window <= 0 {
-		return nil, errors.Errorf("invalid delta window: %d", window)
+		return nil, fmt.Errorf("invalid delta window: %d", window)
 	}
 	coeffCount := minFeatureLength(features)
 	if coeffCount == 0 {
@@ -66,10 +66,10 @@ func AppendDeltas(features [][]float64, window, order int) ([][]float64, error) 
 		return cloneFeatures(features), nil
 	}
 	if order > 2 {
-		return nil, errors.Errorf("unsupported delta order: %d", order)
+		return nil, fmt.Errorf("unsupported delta order: %d", order)
 	}
 	if window <= 0 {
-		return nil, errors.Errorf("invalid delta window: %d", window)
+		return nil, fmt.Errorf("invalid delta window: %d", window)
 	}
 
 	coeffCount := minFeatureLength(features)

@@ -1,6 +1,8 @@
 package mfcc
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"math/bits"
 	"slices"
@@ -9,7 +11,6 @@ import (
 
 	"github.com/mjibson/go-dsp/fft"
 	"github.com/mjibson/go-dsp/window"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -33,16 +34,16 @@ func FindOffset(wholeWavPath, chunkWavPath string) (float64, error) {
 func FindOffsetWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (float64, error) {
 	wholeSamples, sampleRate, err := readWavFile(wholeWavPath)
 	if err != nil {
-		return 0, errors.Wrap(err, "read whole wav file failed")
+		return 0, fmt.Errorf("read whole wav file failed: %w", err)
 	}
 
 	chunkSamples, chunkSampleRate, err := readWavFile(chunkWavPath)
 	if err != nil {
-		return 0, errors.Wrap(err, "read chunk wav file failed")
+		return 0, fmt.Errorf("read chunk wav file failed: %w", err)
 	}
 
 	if sampleRate != chunkSampleRate {
-		return 0, errors.Errorf("sample rate mismatch: whole %dHz, chunk %dHz", sampleRate, chunkSampleRate)
+		return 0, fmt.Errorf("sample rate mismatch: whole %dHz, chunk %dHz", sampleRate, chunkSampleRate)
 	}
 
 	if len(wholeSamples) < len(chunkSamples) {
@@ -51,10 +52,10 @@ func FindOffsetWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (float6
 
 	extractor, err := NewExtractor(sampleRate, cfg)
 	if err != nil {
-		return 0, errors.Wrap(err, "init MFCC extractor failed")
+		return 0, fmt.Errorf("init MFCC extractor failed: %w", err)
 	}
 	if extractor.numCoefficients <= distanceStartCoeff {
-		return 0, errors.Errorf(
+		return 0, fmt.Errorf(
 			"insufficient MFCC coefficients for offset search: got %d, need > %d",
 			extractor.numCoefficients,
 			distanceStartCoeff,
@@ -70,7 +71,7 @@ func FindOffsetWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (float6
 		return 0, err
 	}
 	if coeffCount := coeffCountForMFCCs(mfccWhole, mfccChunk); coeffCount <= distanceStartCoeff {
-		return 0, errors.Errorf(
+		return 0, fmt.Errorf(
 			"insufficient MFCC coefficients after extraction: got %d, need > %d",
 			coeffCount,
 			distanceStartCoeff,
@@ -78,7 +79,7 @@ func FindOffsetWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (float6
 	}
 
 	if _, _, err := normalizeForMatch(mfccWhole, mfccChunk, extractor.cmvnStdFloor); err != nil {
-		return 0, errors.Wrap(err, "normalize MFCCs failed")
+		return 0, fmt.Errorf("normalize MFCCs failed: %w", err)
 	}
 
 	return findOffset(mfccWhole, mfccChunk, sampleRate, extractor.hopSize), nil
@@ -86,7 +87,7 @@ func FindOffsetWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (float6
 
 func shortInputError(label string, windowSize, sampleRate int) error {
 	windowMs := float64(windowSize) * 1000 / float64(sampleRate)
-	return errors.Errorf("%s wav data too short to compute MFCCs: need at least %d samples (about %.2fms) per frame", label, windowSize, windowMs)
+	return fmt.Errorf("%s wav data too short to compute MFCCs: need at least %d samples (about %.2fms) per frame", label, windowSize, windowMs)
 }
 
 func calculateMFCCForOffset(label string, extractor *Extractor, samples []float64) ([][]float64, error) {
@@ -98,15 +99,15 @@ func calculateMFCCForOffset(label string, extractor *Extractor, samples []float6
 	}
 	mean, err := meanAndValidateSamples(samples)
 	if err != nil {
-		return nil, errors.Wrapf(err, "invalid %s samples", label)
+		return nil, fmt.Errorf("invalid %s samples: %w", label, err)
 	}
 
 	mfcc := extractor.calculateWithMean(samples, mean)
 	if len(mfcc) == 0 {
-		return nil, errors.Errorf("failed to compute MFCCs from %s wav", label)
+		return nil, fmt.Errorf("failed to compute MFCCs from %s wav", label)
 	}
 	if err := validateMFCC(mfcc); err != nil {
-		return nil, errors.Wrapf(err, "invalid MFCC from %s wav", label)
+		return nil, fmt.Errorf("invalid MFCC from %s wav: %w", label, err)
 	}
 	return mfcc, nil
 }
@@ -131,7 +132,7 @@ func resolveDuration(value, fallback time.Duration, label string) (time.Duration
 		return fallback, nil
 	}
 	if value < 0 {
-		return 0, errors.Errorf("invalid %s duration: %s", label, value)
+		return 0, fmt.Errorf("invalid %s duration: %s", label, value)
 	}
 	return value, nil
 }
@@ -141,7 +142,7 @@ func resolvePositiveFloat(value, fallback float64, label string) (float64, error
 		value = fallback
 	}
 	if math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
-		return 0, errors.Errorf("invalid %s: %f", label, value)
+		return 0, fmt.Errorf("invalid %s: %f", label, value)
 	}
 	return value, nil
 }
@@ -218,7 +219,7 @@ type staticConfigKey struct {
 
 func normalizeConfig(sampleRate int, cfg Config) (resolvedConfig, error) {
 	if sampleRate <= 0 {
-		return resolvedConfig{}, errors.Errorf("invalid sample rate: %dHz", sampleRate)
+		return resolvedConfig{}, fmt.Errorf("invalid sample rate: %dHz", sampleRate)
 	}
 
 	windowDuration, err := resolveDuration(cfg.WindowDuration, defaultWindowDuration, "window")
@@ -244,13 +245,13 @@ func normalizeConfig(sampleRate int, cfg Config) (resolvedConfig, error) {
 		numCoefficients = defaultNumCoefficients
 	}
 	if numFilters <= 0 {
-		return resolvedConfig{}, errors.Errorf("invalid num filters: %d", numFilters)
+		return resolvedConfig{}, fmt.Errorf("invalid num filters: %d", numFilters)
 	}
 	if numCoefficients <= 0 {
-		return resolvedConfig{}, errors.Errorf("invalid num coefficients: %d", numCoefficients)
+		return resolvedConfig{}, fmt.Errorf("invalid num coefficients: %d", numCoefficients)
 	}
 	if numCoefficients > numFilters {
-		return resolvedConfig{}, errors.Errorf("num coefficients (%d) exceed num filters (%d)", numCoefficients, numFilters)
+		return resolvedConfig{}, fmt.Errorf("num coefficients (%d) exceed num filters (%d)", numCoefficients, numFilters)
 	}
 
 	preEmphasis := cfg.PreEmphasis
@@ -263,7 +264,7 @@ func normalizeConfig(sampleRate int, cfg Config) (resolvedConfig, error) {
 		return resolvedConfig{}, errors.New("invalid pre-emphasis")
 	}
 	if preEmphasis < 0 || preEmphasis > 1 {
-		return resolvedConfig{}, errors.Errorf("pre-emphasis out of range: %f", preEmphasis)
+		return resolvedConfig{}, fmt.Errorf("pre-emphasis out of range: %f", preEmphasis)
 	}
 
 	energyFloor, err := resolvePositiveFloat(cfg.EnergyFloor, defaultEnergyFloor, "energy floor")
@@ -308,7 +309,7 @@ func getMFCCConfig(sampleRate int, cfg Config) (*mfccConfig, error) {
 		binCount := nfft/2 + 1
 		if binCount < resolved.numFilters+2 {
 			// mel 필터 뱅크를 모두 배치할 만큼 주파수 해상도가 부족하다.
-			return nil, errors.Errorf("insufficient mel resolution: sample rate %dHz, bin count %d", sampleRate, binCount)
+			return nil, fmt.Errorf("insufficient mel resolution: sample rate %dHz, bin count %d", sampleRate, binCount)
 		}
 		filterBank := createFilterBank(nfft, sampleRate, resolved.numFilters)
 		filterStarts, filterEnds := filterRanges(filterBank)
@@ -320,7 +321,7 @@ func getMFCCConfig(sampleRate int, cfg Config) (*mfccConfig, error) {
 		}
 		if activeFilters < resolved.numFilters {
 			// 멜 필터가 겹쳐서 일부가 사라지는 경우는 표준 MFCC 특성을 유지할 수 없다.
-			return nil, errors.Errorf("invalid mel filter bank: active %d < requested %d", activeFilters, resolved.numFilters)
+			return nil, fmt.Errorf("invalid mel filter bank: active %d < requested %d", activeFilters, resolved.numFilters)
 		}
 
 		staticCfg = &mfccStaticConfig{
@@ -842,7 +843,7 @@ func validateMFCC(mfcc [][]float64) error {
 	for i, frame := range mfcc {
 		for j, v := range frame {
 			if math.IsNaN(v) || math.IsInf(v, 0) {
-				return errors.Errorf("invalid MFCC value at frame %d, coeff %d", i, j)
+				return fmt.Errorf("invalid MFCC value at frame %d, coeff %d", i, j)
 			}
 		}
 	}
@@ -856,7 +857,7 @@ func meanAndValidateSamples(samples []float64) (float64, error) {
 	sum := 0.0
 	for i, v := range samples {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return 0, errors.Errorf("invalid sample value at index %d", i)
+			return 0, fmt.Errorf("invalid sample value at index %d", i)
 		}
 		sum += v
 	}

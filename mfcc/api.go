@@ -1,10 +1,10 @@
 package mfcc
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 // Config는 MFCC 계산에 사용할 기본 설정값을 담는다.
@@ -115,7 +115,7 @@ func (e *Extractor) Calculate(samples []float64) ([][]float64, error) {
 		return nil, errors.New("extractor is nil")
 	}
 	if len(samples) < e.windowSize {
-		return nil, errors.Errorf("input too short to compute MFCCs: need at least %d samples", e.windowSize)
+		return nil, fmt.Errorf("input too short to compute MFCCs: need at least %d samples", e.windowSize)
 	}
 	mean, err := meanAndValidateSamples(samples)
 	if err != nil {
