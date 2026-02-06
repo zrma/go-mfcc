@@ -605,7 +605,7 @@ func linspace(start, end float64, numPoints int) []float64 {
 	return points
 }
 
-func applyFilterBank(magnitudes []float64, filterBank [][]float64, filtered []float64, starts, ends []int) {
+func applyFilterBank(powers []float64, filterBank [][]float64, filtered []float64, starts, ends []int) {
 	useRanges := len(starts) == len(filterBank) && len(ends) == len(filterBank)
 
 	for i, filter := range filterBank {
@@ -615,14 +615,14 @@ func applyFilterBank(magnitudes []float64, filterBank [][]float64, filtered []fl
 			start = starts[i]
 			end = ends[i]
 		}
-		limit := min(len(magnitudes), end)
+		limit := min(len(powers), end)
 		if start >= limit {
 			filtered[i] = 0
 			continue
 		}
 		sum := 0.0
 		for j := start; j < limit; j++ {
-			sum += magnitudes[j] * filter[j]
+			sum += powers[j] * filter[j]
 		}
 		filtered[i] = sum
 	}
