@@ -896,13 +896,18 @@ func l2NormalizeFramesWithLimit(mfcc [][]float64, startCoeff, coeffLimit int) {
 	}
 }
 
+const (
+	htkMelScale = 2595.0
+	htkMelHzRef = 700.0
+)
+
 // https://en.wikipedia.org/wiki/Mel_scale
 func hzToMel(freq float64) float64 {
-	return 2_595 * math.Log10(1+freq/700)
+	return htkMelScale * math.Log10(1+freq/htkMelHzRef)
 }
 
 func melToHz(mel float64) float64 {
-	return 700 * (math.Pow(10, mel/2_595) - 1)
+	return htkMelHzRef * (math.Pow(10, mel/htkMelScale) - 1)
 }
 
 func meanValue(samples []float64) float64 {
