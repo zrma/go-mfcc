@@ -125,6 +125,9 @@ func (e *Extractor) Calculate(samples []float64) ([][]float64, error) {
 	if len(mfcc) == 0 {
 		return nil, errors.New("failed to compute MFCCs")
 	}
+	if err := validateMFCC(mfcc); err != nil {
+		return nil, fmt.Errorf("invalid MFCC output: %w", err)
+	}
 	return mfcc, nil
 }
 

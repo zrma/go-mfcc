@@ -196,3 +196,22 @@ func TestApplyCMVN_FloorsProvidedStdWithoutMutation(t *testing.T) {
 		assert.InDeltaSlice(t, expected[i], mfcc[i], 1e-12)
 	}
 }
+
+func TestExtractorCalculate_ValidatesMFCCOutput(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	extractor, err := NewExtractor(16_000, DefaultConfig())
+	require.NoError(t, err)
+
+	dct := make([][]float64, len(extractor.dctMatrix))
+	for i := range dct {
+		dct[i] = slices.Clone(extractor.dctMatrix[i])
+	}
+	dct[0][0] = math.NaN()
+	extractor.dctMatrix = dct
+
+	samples := make([]float64, extractor.WindowSize())
+	_, err = extractor.Calculate(samples)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid MFCC")
+}
