@@ -965,46 +965,6 @@ func nextPow2(n int) int {
 }
 
 func findOffset(mfccWhole, mfccChunk [][]float64, sampleRate, hopSize int) float64 {
-	if len(mfccChunk) == 0 || len(mfccWhole) < len(mfccChunk) {
-		return 0
-	}
-
-	coeffCount := coeffCountForMFCCs(mfccChunk, mfccWhole)
-	if coeffCount == 0 {
-		return 0
-	}
-
-	minDistance := math.MaxFloat64
-	offset := 0
-
-	// C0(0번째 켑스트럼)은 전체 에너지 변화(녹음 게인 등)에 가장 민감하므로
-	// 오프셋 검색에서는 제외해 gain 차이에 더 강인하게 만든다.
-	startCoeff := distanceStartCoeff
-	if coeffCount <= startCoeff {
-		return 0
-	}
-
-	limit := len(mfccWhole) - len(mfccChunk) + 1
-	for i := range limit {
-		distance := 0.0
-	loop:
-		for j := range len(mfccChunk) {
-			chunkFrame := mfccChunk[j]
-			wholeFrame := mfccWhole[i+j]
-
-			for k := startCoeff; k < coeffCount; k++ {
-				diff := wholeFrame[k] - chunkFrame[k]
-				distance += diff * diff
-				if distance >= minDistance {
-					break loop
-				}
-			}
-		}
-		if distance < minDistance {
-			minDistance = distance
-			offset = i
-		}
-	}
-
+	offset := findOffsetFrameIndex(mfccWhole, mfccChunk)
 	return float64(offset) * float64(hopSize) / float64(sampleRate)
 }
