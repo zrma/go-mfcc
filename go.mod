@@ -1,8 +1,8 @@
 module github.com/zrma/go-mfcc
 
-go 1.24.11
+go 1.26
 
-toolchain go1.25.5
+toolchain go1.26.2
 
 require (
 	github.com/go-audio/audio v1.0.0
