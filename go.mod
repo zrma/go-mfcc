@@ -2,7 +2,7 @@ module github.com/zrma/go-mfcc
 
 go 1.26
 
-toolchain go1.26.4
+toolchain go1.26.5
 
 require (
 	github.com/go-audio/audio v1.0.0
