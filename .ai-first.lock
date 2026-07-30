@@ -1,0 +1,43 @@
+{
+  "framework": {
+    "digest": "31c1cecbbedd182a2c8f9f3e6bf752e38ec5d99e98cc15cc6cf9b2eb58ee6b4b",
+    "source_commit": "cd20e4078fad541440a03b63a33ebe328427fcce",
+    "source_kind": "release",
+    "source_revision": "v1.0.0",
+    "version": "1.0.0"
+  },
+  "framework_inputs": {
+    "framework/core/AGENTS.md": "8cd3e861dd910106f03fa50c7d9035d827e71bc46d3e0c314cc45d4db1f89927",
+    "framework/core/agent-harness.md": "4cfdaa769446989e46d43263c5b8e904556afc89bac1d3abd6478129ec6de1b6",
+    "framework/profiles/openai-agent-guidance/AGENTS.md": "54a6f9771b46e66b486708d4036cbb0ca15b03ae1df4f59a1bcdde979844d9c7",
+    "framework/profiles/openai-agent-guidance/agent-harness.md": "080fd340d32edc78d90ec090f80c47e0ade03712baef5e71b47d53c5ea8f230e",
+    "framework/profiles/public-repository/AGENTS.md": "b07ac20c9e1611c7e98c5978ec385ca0560363c4b3f55f0a84399791aee7c917",
+    "framework/profiles/public-repository/agent-harness.md": "4704a09b288b0afb5527c983f52b9ee28b4077c1876fb02c38b43b588b88afd9",
+    "framework/profiles/vcs-jj/AGENTS.md": "386d7c744af12c9eb0e899a4d3a844c87726e8bb83726cecc90fa596e7132686",
+    "framework/profiles/vcs-jj/agent-harness.md": "060ae682ffc96516616375e9a7ad5896d7dba5138cb77c4099b42437c0ad77ba",
+    "framework/standalone/check.py": "241f2d454674f16f1f9bab6474dce1fa0703a75c32b7106e7d54e52ce771d8a5",
+    "src/ai_first/__init__.py": "27979f2d548395d9796995346e8a5ce1868867f7437186842b26fa03ba8f70ab",
+    "src/ai_first/__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+    "src/ai_first/cli.py": "432cd5b48ddf64a23fcb567db84b509948b6d9049deb90002f34535ed6586f82",
+    "src/ai_first/config.py": "429dd098fa823c64c0dc8cba48378efa8e6f1a7788fd3bdc34cf0e6da82f99aa",
+    "src/ai_first/publication.py": "af2beb3e18671267cb8fb1908239f4073abe8bb86121b01a19f96005b5cc24b6",
+    "src/ai_first/render.py": "05f55dae0f701cce5e0e74b625e95c8888981db1155b27985a14184f40e69f4b"
+  },
+  "outputs": {
+    ".ai-first/check.py": "241f2d454674f16f1f9bab6474dce1fa0703a75c32b7106e7d54e52ce771d8a5",
+    "AGENTS.md": "0e6d1138e6829fe271a96e99630869a5a7fbacb8ce71d74d88fbb5e605c98f41",
+    "docs/agent-harness.md": "bce59ec3bb2196f21c02b6f41661fa7d1b68b4728e2b75c7a26e893cd9126858"
+  },
+  "profiles": [
+    "vcs-jj",
+    "public-repository",
+    "openai-agent-guidance"
+  ],
+  "repository_inputs": {
+    ".ai-first.toml": "b71b3f9e8ba2e275e79f8e32fdc51af879a9d7b5c8449886e523a254e4097e73",
+    ".ai-first/overlays/agents-first-read.md": "ae5ced0ec0e8f07a0cb14bfd7fa84ec2000d6d1ddedcb0f77e21fc5385a8b545",
+    ".ai-first/overlays/agents-project.md": "a4183ede61791205f6e3b156c2cd85db5b3851cfdd41daf293cba33347e24475",
+    ".ai-first/overlays/harness-project.md": "b21d0091bab566985daddcf9459c54e42cd7607046d46dd9e5057daf69cb8033"
+  },
+  "schema_version": 1
+}

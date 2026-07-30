@@ -1,0 +1,28 @@
+schema_version = 1
+framework_version = "1.0.0"
+source_kind = "release"
+source_revision = "v1.0.0"
+profiles = ["vcs-jj", "public-repository", "openai-agent-guidance"]
+
+[project]
+name = "go-mfcc"
+objective = """
+두 WAV 파일에서 재현 가능한 MFCC와 ASR feature를 계산하고, 견고한 입력 검증과
+명시적인 configuration을 통해 두 신호의 시간 offset을 추정하는 Go library를
+제공한다.
+"""
+publication_class = "public"
+
+[overlay]
+agents_first_read = ".ai-first/overlays/agents-first-read.md"
+agents_project = ".ai-first/overlays/agents-project.md"
+harness_project = ".ai-first/overlays/harness-project.md"
+
+[output]
+agents = "AGENTS.md"
+harness = "docs/agent-harness.md"
+standalone_check = ".ai-first/check.py"
+lock = ".ai-first.lock"
+
+[checks]
+publication = "scripts/check-publication-boundary.py"

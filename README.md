@@ -103,5 +103,8 @@ Notes:
 ## Development
 
 ```bash
-go test ./...
+scripts/check.sh
 ```
+
+에이전트 작업은 [AGENTS.md](AGENTS.md)에서 시작하고 현재 baseline과 완료 조건은
+[docs/HANDOFF.md](docs/HANDOFF.md)를 따른다.
