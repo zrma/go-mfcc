@@ -1,7 +1,7 @@
 schema_version = 1
-framework_version = "1.0.0"
+framework_version = "1.1.1"
 source_kind = "release"
-source_revision = "v1.0.0"
+source_revision = "v1.1.1"
 profiles = ["vcs-jj", "public-repository", "openai-agent-guidance"]
 
 [project]

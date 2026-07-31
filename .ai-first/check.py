@@ -5,7 +5,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path, PurePosixPath
+
+
+ACTIVE_WORK_GLOBS = ("docs/todo-*/spec.md",)
+STATUS_LINE = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:상태|status)\s*:\s*(?P<value>.*?)\s*$",
+    re.IGNORECASE,
+)
+STATUS_HEADING = re.compile(
+    r"^\s{0,3}#{1,6}\s*(?:상태|status)\s*#*\s*$",
+    re.IGNORECASE,
+)
+TERMINAL_STATUS_VALUE = re.compile(
+    r"^(?:완료|complete(?:d)?|done|closed|implemented|superseded|deferred|"
+    r"cancel(?:l)?ed)(?:\s|[.!:;—–-]|$)",
+    re.IGNORECASE,
+)
 
 
 def digest(path: Path) -> str:
@@ -45,6 +62,53 @@ def verify_group(root: Path, group: str, entries: object) -> list[str]:
     return failures
 
 
+def verify_active_work(root: Path) -> list[str]:
+    failures: list[str] = []
+    for pattern in ACTIVE_WORK_GLOBS:
+        for path in sorted(root.glob(pattern)):
+            if not path.is_file():
+                continue
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except (OSError, UnicodeDecodeError) as error:
+                relative = path.relative_to(root).as_posix()
+                failures.append(f"cannot read active-work packet {relative}: {error}")
+                continue
+            for line_number, line in enumerate(lines, start=1):
+                normalized = (
+                    line.replace("**", "").replace("__", "").replace("`", "")
+                )
+                status = STATUS_LINE.fullmatch(normalized)
+                terminal_line = (
+                    line_number
+                    if status and TERMINAL_STATUS_VALUE.match(status.group("value"))
+                    else None
+                )
+                if terminal_line is None and STATUS_HEADING.fullmatch(normalized):
+                    for offset, value_line in enumerate(
+                        lines[line_number:], start=line_number + 1
+                    ):
+                        normalized_value = (
+                            value_line.replace("**", "")
+                            .replace("__", "")
+                            .replace("`", "")
+                            .strip()
+                        )
+                        if not normalized_value:
+                            continue
+                        if TERMINAL_STATUS_VALUE.match(normalized_value):
+                            terminal_line = offset
+                        break
+                if terminal_line is not None:
+                    relative = path.relative_to(root).as_posix()
+                    failures.append(
+                        "completed active-work packet must be archived or removed: "
+                        f"{relative}:{terminal_line}"
+                    )
+                    break
+    return failures
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     lock_path = root / ".ai-first.lock"
@@ -61,6 +125,7 @@ def main() -> int:
         verify_group(root, "repository_inputs", lock.get("repository_inputs"))
     )
     failures.extend(verify_group(root, "outputs", lock.get("outputs")))
+    failures.extend(verify_active_work(root))
 
     if failures:
         for failure in failures:
