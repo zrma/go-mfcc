@@ -25,37 +25,57 @@ const (
 )
 
 // FindOffset는 전체 WAV와 그 일부를 나타내는 WAV를 받아,
-// chunk가 whole에서 시작하는 시간을 초 단위로 반환한다.
+// chunk가 whole에서 시작하는 최선의 후보 시간을 초 단위로 반환한다.
+// 결과는 hop 크기로 양자화되며 match 품질이 필요하면 FindOffsetMatch를 사용한다.
 func FindOffset(wholeWavPath, chunkWavPath string) (float64, error) {
-	return FindOffsetWithConfig(wholeWavPath, chunkWavPath, DefaultConfig())
+	match, err := FindOffsetMatch(wholeWavPath, chunkWavPath)
+	if err != nil {
+		return 0, err
+	}
+	return match.OffsetSeconds, nil
 }
 
 // FindOffsetWithConfig는 지정한 설정으로 MFCC를 계산해 offset을 추정한다.
 func FindOffsetWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (float64, error) {
+	match, err := FindOffsetMatchWithConfig(wholeWavPath, chunkWavPath, cfg)
+	if err != nil {
+		return 0, err
+	}
+	return match.OffsetSeconds, nil
+}
+
+// FindOffsetMatch는 기본 설정으로 최선의 offset 후보와 해상도/거리 정보를 반환한다.
+func FindOffsetMatch(wholeWavPath, chunkWavPath string) (OffsetMatch, error) {
+	return FindOffsetMatchWithConfig(wholeWavPath, chunkWavPath, DefaultConfig())
+}
+
+// FindOffsetMatchWithConfig는 지정한 설정으로 최선의 offset 후보와 해상도/거리 정보를 반환한다.
+// 이 함수는 application-specific match threshold를 적용하지 않는다.
+func FindOffsetMatchWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (OffsetMatch, error) {
 	wholeSamples, sampleRate, err := readWavFile(wholeWavPath)
 	if err != nil {
-		return 0, fmt.Errorf("read whole wav file failed: %w", err)
+		return OffsetMatch{}, fmt.Errorf("read whole wav file failed: %w", err)
 	}
 
 	chunkSamples, chunkSampleRate, err := readWavFile(chunkWavPath)
 	if err != nil {
-		return 0, fmt.Errorf("read chunk wav file failed: %w", err)
+		return OffsetMatch{}, fmt.Errorf("read chunk wav file failed: %w", err)
 	}
 
 	if sampleRate != chunkSampleRate {
-		return 0, fmt.Errorf("sample rate mismatch: whole %dHz, chunk %dHz", sampleRate, chunkSampleRate)
+		return OffsetMatch{}, fmt.Errorf("sample rate mismatch: whole %dHz, chunk %dHz", sampleRate, chunkSampleRate)
 	}
 
 	if len(wholeSamples) < len(chunkSamples) {
-		return 0, errors.New("whole wav file is shorter than chunk wav file")
+		return OffsetMatch{}, errors.New("whole wav file is shorter than chunk wav file")
 	}
 
 	extractor, err := NewExtractor(sampleRate, cfg)
 	if err != nil {
-		return 0, fmt.Errorf("init MFCC extractor failed: %w", err)
+		return OffsetMatch{}, fmt.Errorf("init MFCC extractor failed: %w", err)
 	}
 	if extractor.numCoefficients <= distanceStartCoeff {
-		return 0, fmt.Errorf(
+		return OffsetMatch{}, fmt.Errorf(
 			"insufficient MFCC coefficients for offset search: got %d, need > %d",
 			extractor.numCoefficients,
 			distanceStartCoeff,
@@ -64,14 +84,14 @@ func FindOffsetWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (float6
 
 	mfccWhole, err := calculateMFCCForOffset("whole", extractor, wholeSamples)
 	if err != nil {
-		return 0, err
+		return OffsetMatch{}, err
 	}
 	mfccChunk, err := calculateMFCCForOffset("chunk", extractor, chunkSamples)
 	if err != nil {
-		return 0, err
+		return OffsetMatch{}, err
 	}
 	if coeffCount := coeffCountForMFCCs(mfccWhole, mfccChunk); coeffCount <= distanceStartCoeff {
-		return 0, fmt.Errorf(
+		return OffsetMatch{}, fmt.Errorf(
 			"insufficient MFCC coefficients after extraction: got %d, need > %d",
 			coeffCount,
 			distanceStartCoeff,
@@ -79,10 +99,19 @@ func FindOffsetWithConfig(wholeWavPath, chunkWavPath string, cfg Config) (float6
 	}
 
 	if _, _, err := normalizeForMatch(mfccWhole, mfccChunk, extractor.cmvnStdFloor); err != nil {
-		return 0, fmt.Errorf("normalize MFCCs failed: %w", err)
+		return OffsetMatch{}, fmt.Errorf("normalize MFCCs failed: %w", err)
 	}
 
-	return findOffset(mfccWhole, mfccChunk, sampleRate, extractor.hopSize), nil
+	frameIndex, squaredDistance := findOffsetFrameIndexWithDistance(mfccWhole, mfccChunk)
+	if math.IsInf(squaredDistance, 0) || math.IsNaN(squaredDistance) {
+		return OffsetMatch{}, errors.New("offset search did not produce a finite distance")
+	}
+	resolutionSeconds := float64(extractor.hopSize) / float64(sampleRate)
+	return OffsetMatch{
+		OffsetSeconds:     float64(frameIndex) * resolutionSeconds,
+		ResolutionSeconds: resolutionSeconds,
+		MeanFrameDistance: squaredDistance / float64(len(mfccChunk)),
+	}, nil
 }
 
 func shortInputError(label string, windowSize, sampleRate int) error {
@@ -196,9 +225,6 @@ type mfccConfig struct {
 	cmvnStdFloor float64
 }
 
-// sample rate 및 프레임/필터 구성이 같은 경우 정적 윈도우/필터 뱅크를 캐싱해 재사용한다.
-var mfccStaticConfigCache sync.Map
-
 type resolvedConfig struct {
 	sampleRate      int
 	windowSize      int
@@ -216,6 +242,53 @@ type staticConfigKey struct {
 	numFilters      int
 	numCoefficients int
 }
+
+const maxMFCCStaticConfigCacheEntries = 32
+
+type boundedMFCCStaticConfigCache struct {
+	mu      sync.Mutex
+	entries map[staticConfigKey]*mfccStaticConfig
+	order   []staticConfigKey
+}
+
+func newBoundedMFCCStaticConfigCache() *boundedMFCCStaticConfigCache {
+	return &boundedMFCCStaticConfigCache{
+		entries: make(map[staticConfigKey]*mfccStaticConfig, maxMFCCStaticConfigCacheEntries),
+		order:   make([]staticConfigKey, 0, maxMFCCStaticConfigCacheEntries),
+	}
+}
+
+func (c *boundedMFCCStaticConfigCache) load(key staticConfigKey) (*mfccStaticConfig, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	config, ok := c.entries[key]
+	return config, ok
+}
+
+func (c *boundedMFCCStaticConfigCache) loadOrStore(key staticConfigKey, config *mfccStaticConfig) *mfccStaticConfig {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cached, ok := c.entries[key]; ok {
+		return cached
+	}
+	if len(c.entries) >= maxMFCCStaticConfigCacheEntries {
+		oldest := c.order[0]
+		delete(c.entries, oldest)
+		c.order = c.order[1:]
+	}
+	c.entries[key] = config
+	c.order = append(c.order, key)
+	return config
+}
+
+func (c *boundedMFCCStaticConfigCache) entryCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
+}
+
+// sample rate 및 프레임/필터 구성이 같은 정적 설정을 제한된 수만 캐싱해 재사용한다.
+var mfccStaticConfigCache = newBoundedMFCCStaticConfigCache()
 
 func normalizeConfig(sampleRate int, cfg Config) (resolvedConfig, error) {
 	if sampleRate <= 0 {
@@ -302,8 +375,8 @@ func getMFCCConfig(sampleRate int, cfg Config) (*mfccConfig, error) {
 		numCoefficients: resolved.numCoefficients,
 	}
 	var staticCfg *mfccStaticConfig
-	if cached, ok := mfccStaticConfigCache.Load(cacheKey); ok {
-		staticCfg = cached.(*mfccStaticConfig)
+	if cached, ok := mfccStaticConfigCache.load(cacheKey); ok {
+		staticCfg = cached
 	} else {
 		nfft := nextPow2(resolved.windowSize)
 		binCount := nfft/2 + 1
@@ -338,9 +411,7 @@ func getMFCCConfig(sampleRate int, cfg Config) (*mfccConfig, error) {
 			dctMatrix:       makeDCTMatrix(resolved.numCoefficients, resolved.numFilters),
 		}
 
-		if cached, loaded := mfccStaticConfigCache.LoadOrStore(cacheKey, staticCfg); loaded {
-			staticCfg = cached.(*mfccStaticConfig)
-		}
+		staticCfg = mfccStaticConfigCache.loadOrStore(cacheKey, staticCfg)
 	}
 
 	return &mfccConfig{
@@ -962,9 +1033,4 @@ func nextPow2(n int) int {
 		return n
 	}
 	return 1 << bits.Len(uint(n))
-}
-
-func findOffset(mfccWhole, mfccChunk [][]float64, sampleRate, hopSize int) float64 {
-	offset := findOffsetFrameIndex(mfccWhole, mfccChunk)
-	return float64(offset) * float64(hopSize) / float64(sampleRate)
 }

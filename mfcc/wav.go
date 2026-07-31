@@ -29,6 +29,7 @@ type wavFormatInfo struct {
 	validBitsPerSample uint16
 	subFormat          [16]byte
 	dataChunkSize      uint32
+	dataChunkOffset    int64
 }
 
 func (i wavFormatInfo) isIEEEFloat() bool {
@@ -81,7 +82,12 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 			case "fmt ":
 				return info, errors.New("fmt chunk too short")
 			case "data":
+				dataOffset, err := r.Seek(0, io.SeekCurrent)
+				if err != nil {
+					return info, fmt.Errorf("locate data chunk failed: %w", err)
+				}
 				info.dataChunkSize = chunkSize
+				info.dataChunkOffset = dataOffset
 				foundData = true
 				if foundFmt {
 					return info, nil
@@ -135,7 +141,12 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 		}
 
 		if string(chunkID[:]) == "data" {
+			dataOffset, err := r.Seek(0, io.SeekCurrent)
+			if err != nil {
+				return info, fmt.Errorf("locate data chunk failed: %w", err)
+			}
 			info.dataChunkSize = chunkSize
+			info.dataChunkOffset = dataOffset
 			foundData = true
 			if foundFmt {
 				return info, nil
@@ -161,6 +172,29 @@ func probeWavFormat(r io.ReadSeeker) (wavFormatInfo, error) {
 	}
 }
 
+func validateWavDataBounds(file *os.File, info wavFormatInfo) error {
+	if file == nil {
+		return errors.New("wav file is nil")
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat wav file failed: %w", err)
+	}
+	if info.dataChunkOffset < 0 || info.dataChunkOffset > stat.Size() {
+		return fmt.Errorf("invalid wav data offset: %d", info.dataChunkOffset)
+	}
+
+	available := stat.Size() - info.dataChunkOffset
+	declared := int64(info.dataChunkSize)
+	if declared > available {
+		return fmt.Errorf("wav data truncated: declared %d bytes, available %d", declared, available)
+	}
+	if uint64(info.dataChunkSize) > uint64(^uint(0)>>1) {
+		return fmt.Errorf("wav data chunk too large for this platform: %d bytes", info.dataChunkSize)
+	}
+	return nil
+}
+
 func readWavFile(filepath string) (data []float64, sampleRate int, err error) {
 	file0, err := os.Open(filepath)
 	if err != nil {
@@ -175,6 +209,9 @@ func readWavFile(filepath string) (data []float64, sampleRate int, err error) {
 	formatInfo, err := probeWavFormat(file0)
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse wav format failed: %w", err)
+	}
+	if err := validateWavDataBounds(file0, formatInfo); err != nil {
+		return nil, 0, fmt.Errorf("validate wav data failed: %w", err)
 	}
 	if _, err := file0.Seek(0, io.SeekStart); err != nil {
 		return nil, 0, fmt.Errorf("rewind wav file failed: %w", err)
@@ -203,7 +240,7 @@ func readWavFile(filepath string) (data []float64, sampleRate int, err error) {
 
 	switch {
 	case isFloat:
-		data, err = decodeFloatPCM(decoder, channels, int(formatInfo.dataChunkSize))
+		data, err = decodeFloatPCM(decoder, channels, formatInfo.dataChunkSize)
 		if err != nil {
 			return nil, 0, fmt.Errorf("decode float wav data failed: %w", err)
 		}
@@ -294,7 +331,7 @@ func decodeIntPCMToMono(buf *audio.IntBuffer, formatInfo wavFormatInfo, channels
 	return data, nil
 }
 
-func decodeFloatPCM(decoder *wav.Decoder, channels int, dataChunkSize int) ([]float64, error) {
+func decodeFloatPCM(decoder *wav.Decoder, channels int, dataChunkSize uint32) ([]float64, error) {
 	if decoder == nil || decoder.PCMChunk == nil {
 		return nil, errors.New("PCM chunk not found")
 	}
@@ -311,10 +348,14 @@ func decodeFloatPCM(decoder *wav.Decoder, channels int, dataChunkSize int) ([]fl
 
 	byteCount := decoder.PCMSize
 	if dataChunkSize > 0 {
-		if dataChunkSize > decoder.PCMSize {
-			return nil, fmt.Errorf("wav data size (%d bytes) exceeds available PCM size (%d bytes)", dataChunkSize, decoder.PCMSize)
+		declaredSize := int(dataChunkSize)
+		if declaredSize > decoder.PCMSize {
+			return nil, fmt.Errorf("wav data size (%d bytes) exceeds available PCM size (%d bytes)", declaredSize, decoder.PCMSize)
 		}
-		byteCount = dataChunkSize
+		byteCount = declaredSize
+	}
+	if byteCount < 0 {
+		return nil, fmt.Errorf("invalid PCM size: %d bytes", byteCount)
 	}
 
 	pcmBytes := make([]byte, byteCount)

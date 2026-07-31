@@ -39,10 +39,38 @@ func TestFindOffsetFrameIndexFFT_MatchesNaiveOnExactMatch(t *testing.T) {
 	}
 
 	startCoeff := distanceStartCoeff
-	gotNaive := findOffsetFrameIndexNaive(whole, chunk, coeffCount, startCoeff)
-	gotFFT, ok := findOffsetFrameIndexFFT(whole, chunk, coeffCount, startCoeff)
+	gotNaive, naiveDistance := findOffsetFrameIndexNaiveWithDistance(whole, chunk, coeffCount, startCoeff)
+	gotFFT, fftDistance, ok := findOffsetFrameIndexFFTWithDistance(whole, chunk, coeffCount, startCoeff)
 	require.True(t, ok)
 
 	assert.Equal(t, wantOffset, gotNaive)
 	assert.Equal(t, wantOffset, gotFFT)
+	assert.InDelta(t, 0.0, naiveDistance, 1e-12)
+	assert.InDelta(t, 0.0, fftDistance, 1e-7)
+}
+
+func TestFindOffsetFrameIndexFFT_TiedMatchesPreferEarliest(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	const (
+		coeffCount = defaultNumCoefficients
+		nFrames    = 4096
+		mFrames    = 512
+	)
+
+	whole := make([][]float64, nFrames)
+	for i := range whole {
+		whole[i] = make([]float64, coeffCount)
+		whole[i][1] = 1
+	}
+	chunk := make([][]float64, mFrames)
+	for i := range chunk {
+		chunk[i] = make([]float64, coeffCount)
+		chunk[i][1] = 1
+	}
+
+	offset, distance, ok := findOffsetFrameIndexFFTWithDistance(whole, chunk, coeffCount, distanceStartCoeff)
+	require.True(t, ok)
+	assert.Zero(t, offset)
+	assert.InDelta(t, 0.0, distance, 1e-7)
 }

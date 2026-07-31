@@ -8,6 +8,7 @@ import ipaddress
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -196,6 +197,8 @@ def self_test() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--stdin", action="store_true")
+    parser.add_argument("--label", default="candidate")
     args = parser.parse_args()
     if args.self_test:
         return self_test()
@@ -211,8 +214,13 @@ def main() -> int:
             raise RuntimeError("declared class does not match live visibility")
         owner, repository = repository_identity(repo)
         findings: set[Finding] = set()
-        for relative, text in files(repo):
-            findings.update(scan_text(relative, text, owner, repository))
+        if args.stdin:
+            findings.update(
+                scan_text(args.label, sys.stdin.read(), owner, repository)
+            )
+        else:
+            for relative, text in files(repo):
+                findings.update(scan_text(relative, text, owner, repository))
     except (OSError, RuntimeError, UnicodeError) as error:
         print(f"publication boundary check failed: {error}")
         return 1

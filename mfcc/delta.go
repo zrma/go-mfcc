@@ -3,6 +3,7 @@ package mfcc
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 )
 
@@ -16,9 +17,9 @@ func ComputeDelta(features [][]float64, window int) ([][]float64, error) {
 	if window <= 0 {
 		return nil, fmt.Errorf("invalid delta window: %d", window)
 	}
-	coeffCount := minFeatureLength(features)
-	if coeffCount == 0 {
-		return nil, errors.New("no coefficients to compute delta")
+	coeffCount, err := validateFeatureMatrix(features)
+	if err != nil {
+		return nil, fmt.Errorf("invalid features for delta: %w", err)
 	}
 
 	denom := 0.0
@@ -62,19 +63,21 @@ func AppendDeltas(features [][]float64, window, order int) ([][]float64, error) 
 	if len(features) == 0 {
 		return nil, errors.New("no features to append deltas")
 	}
-	if order <= 0 {
-		return cloneFeatures(features), nil
+	if order < 0 {
+		return nil, fmt.Errorf("invalid delta order: %d", order)
 	}
 	if order > 2 {
 		return nil, fmt.Errorf("unsupported delta order: %d", order)
 	}
+	coeffCount, err := validateFeatureMatrix(features)
+	if err != nil {
+		return nil, fmt.Errorf("invalid features for delta append: %w", err)
+	}
+	if order == 0 {
+		return cloneFeatures(features), nil
+	}
 	if window <= 0 {
 		return nil, fmt.Errorf("invalid delta window: %d", window)
-	}
-
-	coeffCount := minFeatureLength(features)
-	if coeffCount == 0 {
-		return nil, errors.New("no coefficients to append deltas")
 	}
 
 	delta1, err := ComputeDelta(features, window)
@@ -119,7 +122,10 @@ func ComputeASRFeatures(samples []float64, sampleRate int) ([][]float64, int, er
 
 // ComputeASRFeaturesWithConfig는 설정과 델타 윈도우를 지정해 ASR용 특징을 계산한다.
 func ComputeASRFeaturesWithConfig(samples []float64, sampleRate int, cfg Config, deltaWindow int) ([][]float64, int, error) {
-	if deltaWindow <= 0 {
+	if deltaWindow < 0 {
+		return nil, 0, fmt.Errorf("invalid delta window: %d", deltaWindow)
+	}
+	if deltaWindow == 0 {
 		deltaWindow = defaultDeltaWindow
 	}
 
@@ -158,17 +164,30 @@ func ComputeASRFeaturesFromWavWithConfig(path string, cfg Config, deltaWindow in
 	return features, sampleRate, hopSize, nil
 }
 
-func minFeatureLength(features [][]float64) int {
+func validateFeatureMatrix(features [][]float64) (int, error) {
 	if len(features) == 0 {
-		return 0
+		return 0, errors.New("no feature frames")
 	}
-	minLen := len(features[0])
-	for _, frame := range features[1:] {
-		if len(frame) < minLen {
-			minLen = len(frame)
+	coeffCount := len(features[0])
+	if coeffCount == 0 {
+		return 0, errors.New("no feature coefficients")
+	}
+	for frameIndex, frame := range features {
+		if len(frame) != coeffCount {
+			return 0, fmt.Errorf(
+				"inconsistent coefficient count at frame %d: got %d, want %d",
+				frameIndex,
+				len(frame),
+				coeffCount,
+			)
+		}
+		for coeffIndex, value := range frame {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return 0, fmt.Errorf("non-finite feature at frame %d, coeff %d", frameIndex, coeffIndex)
+			}
 		}
 	}
-	return minLen
+	return coeffCount, nil
 }
 
 func cloneFeatures(src [][]float64) [][]float64 {

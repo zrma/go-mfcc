@@ -8,22 +8,23 @@ const (
 	// offsetSearchFFTThresholdOps는 오프셋 탐색에서 FFT 기반 컨볼루션이
 	// 이득이 될 가능성이 높은 대략적인 연산량 기준이다.
 	// (naive: O((N-M+1)*M*D), FFT: O(D*n*log2(n)))
-	offsetSearchFFTThresholdOps = 5_000_000
+	offsetSearchFFTThresholdOps              = 5_000_000
+	offsetSearchFFTDistanceRelativeTolerance = 1e-10
 
 	// offsetSearchMaxFFTSize는 너무 큰 FFT로 인해 메모리 사용이 폭증하는 것을 방지한다.
 	// n=2^22이면 complex128 2개 버퍼(입력/출력)만으로도 수백 MB가 될 수 있다.
 	offsetSearchMaxFFTSize = 1 << 22
 )
 
-func findOffsetFrameIndex(mfccWhole, mfccChunk [][]float64) int {
+func findOffsetFrameIndexWithDistance(mfccWhole, mfccChunk [][]float64) (int, float64) {
 	if len(mfccChunk) == 0 || len(mfccWhole) < len(mfccChunk) {
-		return 0
+		return 0, math.Inf(1)
 	}
 
 	coeffCount := coeffCountForMFCCs(mfccChunk, mfccWhole)
 	startCoeff := distanceStartCoeff
 	if coeffCount <= startCoeff {
-		return 0
+		return 0, math.Inf(1)
 	}
 
 	dim := coeffCount - startCoeff
@@ -31,20 +32,20 @@ func findOffsetFrameIndex(mfccWhole, mfccChunk [][]float64) int {
 
 	useFFT := len(mfccWhole) >= 2048 && len(mfccChunk) >= 128 && naiveOps >= offsetSearchFFTThresholdOps
 	if useFFT {
-		if offset, ok := findOffsetFrameIndexFFT(mfccWhole, mfccChunk, coeffCount, startCoeff); ok {
-			return offset
+		if offset, distance, ok := findOffsetFrameIndexFFTWithDistance(mfccWhole, mfccChunk, coeffCount, startCoeff); ok {
+			return offset, distance
 		}
 	}
 
-	return findOffsetFrameIndexNaive(mfccWhole, mfccChunk, coeffCount, startCoeff)
+	return findOffsetFrameIndexNaiveWithDistance(mfccWhole, mfccChunk, coeffCount, startCoeff)
 }
 
-func findOffsetFrameIndexNaive(mfccWhole, mfccChunk [][]float64, coeffCount, startCoeff int) int {
+func findOffsetFrameIndexNaiveWithDistance(mfccWhole, mfccChunk [][]float64, coeffCount, startCoeff int) (int, float64) {
 	if len(mfccChunk) == 0 || len(mfccWhole) < len(mfccChunk) {
-		return 0
+		return 0, math.Inf(1)
 	}
 	if coeffCount <= startCoeff {
-		return 0
+		return 0, math.Inf(1)
 	}
 
 	minDistance := math.MaxFloat64
@@ -72,15 +73,15 @@ func findOffsetFrameIndexNaive(mfccWhole, mfccChunk [][]float64, coeffCount, sta
 		}
 	}
 
-	return offset
+	return offset, minDistance
 }
 
-func findOffsetFrameIndexFFT(mfccWhole, mfccChunk [][]float64, coeffCount, startCoeff int) (int, bool) {
+func findOffsetFrameIndexFFTWithDistance(mfccWhole, mfccChunk [][]float64, coeffCount, startCoeff int) (int, float64, bool) {
 	if len(mfccChunk) == 0 || len(mfccWhole) < len(mfccChunk) {
-		return 0, false
+		return 0, 0, false
 	}
 	if coeffCount <= startCoeff {
-		return 0, false
+		return 0, 0, false
 	}
 
 	n := len(mfccWhole)
@@ -88,10 +89,10 @@ func findOffsetFrameIndexFFT(mfccWhole, mfccChunk [][]float64, coeffCount, start
 	nConv := n + m - 1
 	nFFT := nextPow2(nConv)
 	if nFFT <= 0 || nFFT&(nFFT-1) != 0 {
-		return 0, false
+		return 0, 0, false
 	}
 	if nFFT > offsetSearchMaxFFTSize {
-		return 0, false
+		return 0, 0, false
 	}
 
 	outLen := n - m + 1
@@ -156,13 +157,18 @@ func findOffsetFrameIndexFFT(mfccWhole, mfccChunk [][]float64, coeffCount, start
 	for offset := 0; offset < outLen; offset++ {
 		wholeEnergyWindow := prefix[offset+m] - prefix[offset]
 		distance := wholeEnergyWindow + chunkEnergy - 2*corrSum[offset]
+		distanceTolerance := offsetSearchFFTDistanceRelativeTolerance * math.Max(1, wholeEnergyWindow+chunkEnergy)
+		if distance <= distanceTolerance {
+			// FFT 반올림 오차 범위의 이론상 0인 거리를 정규화해 earliest-tie 동작을 보존한다.
+			distance = 0
+		}
 		if distance < minDistance {
 			minDistance = distance
 			best = offset
 		}
 	}
 
-	return best, true
+	return best, minDistance, true
 }
 
 // fftInPlace는 길이가 2의 거듭제곱인 입력에 대해 in-place FFT/IFFT를 수행한다.

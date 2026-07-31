@@ -109,6 +109,26 @@ func TestComputeDelta_Linear(t *testing.T) {
 	assert.InDelta(t, 1.0, delta[2][0], 1e-12)
 }
 
+func TestComputeDelta_RejectsInvalidFeatures(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	tests := []struct {
+		name     string
+		features [][]float64
+	}{
+		{"ragged", [][]float64{{1, 2}, {3}}},
+		{"nan", [][]float64{{1, math.NaN()}}},
+		{"inf", [][]float64{{1, math.Inf(1)}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ComputeDelta(tt.features, 2)
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestAppendDeltas_OrderZeroIgnoresWindow(t *testing.T) {
 	t.Cleanup(func() { goleak.VerifyNone(t) })
 
@@ -127,6 +147,22 @@ func TestAppendDeltas_OrderZeroIgnoresWindow(t *testing.T) {
 			assert.False(t, &features[i][0] == &out[i][0])
 		}
 	}
+}
+
+func TestAppendDeltas_RejectsNegativeOrder(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	_, err := AppendDeltas([][]float64{{1, 2}}, 2, -1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid delta order")
+}
+
+func TestComputeASRFeaturesWithConfig_RejectsNegativeDeltaWindow(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	_, _, err := ComputeASRFeaturesWithConfig(nil, 16_000, DefaultConfig(), -1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid delta window")
 }
 
 func TestExtractorCalculate_RejectsInvalidSamples(t *testing.T) {
@@ -170,6 +206,16 @@ func TestComputeCMVN_RespectsStdFloorOnZeroVariance(t *testing.T) {
 	assert.InDeltaSlice(t, []float64{stdFloor, stdFloor}, std, 1e-12)
 }
 
+func TestComputeCMVNChecked_RejectsInvalidMatrix(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	mean, std, err := ComputeCMVNChecked([][]float64{{1, 2}, {3}}, 0)
+	require.Error(t, err)
+	assert.Nil(t, mean)
+	assert.Nil(t, std)
+	assert.Contains(t, err.Error(), "inconsistent coefficient count")
+}
+
 func TestApplyCMVN_FloorsProvidedStdWithoutMutation(t *testing.T) {
 	t.Cleanup(func() { goleak.VerifyNone(t) })
 
@@ -195,6 +241,23 @@ func TestApplyCMVN_FloorsProvidedStdWithoutMutation(t *testing.T) {
 	for i := range expected {
 		assert.InDeltaSlice(t, expected[i], mfcc[i], 1e-12)
 	}
+}
+
+func TestApplyCMVNChecked_RejectsInvalidStatsBeforeMutation(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	mfcc := [][]float64{{1, 2}, {3, 4}}
+	want := [][]float64{{1, 2}, {3, 4}}
+
+	_, _, err := ApplyCMVNChecked(mfcc, []float64{0}, nil, 0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mean coefficient count mismatch")
+	assert.Equal(t, want, mfcc)
+
+	gotMean, gotStd := ApplyCMVN(mfcc, nil, []float64{1, math.NaN()}, 0)
+	assert.Nil(t, gotMean)
+	assert.Nil(t, gotStd)
+	assert.Equal(t, want, mfcc)
 }
 
 func TestExtractorCalculate_ValidatesMFCCOutput(t *testing.T) {

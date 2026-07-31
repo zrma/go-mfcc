@@ -1,6 +1,7 @@
 package mfcc
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/go-audio/audio"
 	"github.com/go-audio/wav"
@@ -84,6 +86,18 @@ func writeFloatWav(t *testing.T, path string, sampleRate, bitDepth, numChannels 
 	for _, sample := range data {
 		write(sample)
 	}
+}
+
+func overwriteWavDataChunkSize(t *testing.T, path string, size uint32) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	chunkIndex := bytes.Index(data, []byte("data"))
+	require.GreaterOrEqual(t, chunkIndex, 0)
+	require.GreaterOrEqual(t, len(data), chunkIndex+8)
+	binary.LittleEndian.PutUint32(data[chunkIndex+4:chunkIndex+8], size)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
 }
 
 func writeExtensibleFloatWav(t *testing.T, path string, sampleRate, bitDepth, numChannels int, data []float32) {
@@ -423,6 +437,20 @@ func TestFindOffset(t *testing.T) {
 	}
 }
 
+func TestFindOffsetMatch_ReportsResolutionAndDistance(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	match, err := FindOffsetMatch(
+		filepath.Join("testdata", "sample.wav"),
+		filepath.Join("testdata", "sample_3_to_7.wav"),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 3.00, match.OffsetSeconds)
+	assert.InDelta(t, 0.01, match.ResolutionSeconds, 1e-12)
+	assert.GreaterOrEqual(t, match.MeanFrameDistance, 0.0)
+	assert.LessOrEqual(t, match.MeanFrameDistance, 4.0)
+}
+
 func TestFindOffsetWithConfig_ZeroConfigUsesDefaults(t *testing.T) {
 	t.Cleanup(func() { goleak.VerifyNone(t) })
 
@@ -496,7 +524,7 @@ func TestReadWavFile_FloatPCM(t *testing.T) {
 	assert.Equal(t, 16_000, sampleRate)
 
 	expected := []float64{
-		(0.25 - 0.25) / 2,
+		0,
 		(0.5 + 0.75) / 2,
 	}
 	assert.InDeltaSlice(t, expected, data, 1e-6)
@@ -514,7 +542,7 @@ func TestReadWavFile_ExtensibleFloatPCM(t *testing.T) {
 	assert.Equal(t, 16_000, sampleRate)
 
 	expected := []float64{
-		(0.25 - 0.25) / 2,
+		0,
 		(0.5 + 0.75) / 2,
 	}
 	assert.InDeltaSlice(t, expected, data, 1e-6)
@@ -530,6 +558,19 @@ func TestReadWavFile_FloatPCMRejectsNaN(t *testing.T) {
 	_, _, err := readWavFile(path)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid float PCM sample")
+}
+
+func TestReadWavFile_RejectsDeclaredDataPastFileBoundary(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "float-truncated.wav")
+	writeFloatWav(t, path, 16_000, 32, 1, []float32{0.25})
+	overwriteWavDataChunkSize(t, path, ^uint32(0))
+
+	_, _, err := readWavFile(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "wav data truncated")
 }
 
 func TestReadWavFile_Unsigned8BitPCM(t *testing.T) {
@@ -833,6 +874,34 @@ func TestNewMFCCExtractor_CachesImmutableSetup(t *testing.T) {
 	assert.NotSame(t, &extractor1.windowed[0], &extractor2.windowed[0])
 	assert.NotSame(t, &extractor1.powerSpectrum[0], &extractor2.powerSpectrum[0])
 	assert.NotSame(t, &extractor1.filtered[0], &extractor2.filtered[0])
+}
+
+func TestNewMFCCExtractor_StaticConfigCacheIsBounded(t *testing.T) {
+	t.Cleanup(func() { goleak.VerifyNone(t) })
+
+	previousCache := mfccStaticConfigCache
+	mfccStaticConfigCache = newBoundedMFCCStaticConfigCache()
+	t.Cleanup(func() { mfccStaticConfigCache = previousCache })
+
+	const sampleRate = 16_000
+	for i := 0; i < maxMFCCStaticConfigCacheEntries+5; i++ {
+		cfg := DefaultConfig()
+		cfg.WindowDuration = time.Duration(20+i) * time.Millisecond
+		cfg.NumFilters = 4
+		cfg.NumCoefficients = 2
+		_, err := NewExtractor(sampleRate, cfg)
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, maxMFCCStaticConfigCacheEntries, mfccStaticConfigCache.entryCount())
+	firstWindowSize, _ := frameParamsFromDurations(sampleRate, 20*time.Millisecond, defaultHopDuration)
+	_, found := mfccStaticConfigCache.load(staticConfigKey{
+		sampleRate:      sampleRate,
+		windowSize:      firstWindowSize,
+		numFilters:      4,
+		numCoefficients: 2,
+	})
+	assert.False(t, found)
 }
 
 func TestFindOffset_MelFiltersRequireResolution(t *testing.T) {

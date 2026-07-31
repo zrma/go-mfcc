@@ -20,6 +20,15 @@ type Config struct {
 	CMVNStdFloor       float64
 }
 
+// OffsetMatch는 가장 가까운 offset 후보와 그 해상도/거리 정보를 담는다.
+// MeanFrameDistance는 정규화된 MFCC frame 간 제곱거리의 frame 평균이며 낮을수록 가깝다.
+// application별 match threshold는 입력 특성에 맞게 호출자가 결정해야 한다.
+type OffsetMatch struct {
+	OffsetSeconds     float64
+	ResolutionSeconds float64
+	MeanFrameDistance float64
+}
+
 // DefaultConfig는 MFCC 계산에 사용되는 기본 설정을 반환한다.
 func DefaultConfig() Config {
 	return Config{
@@ -173,17 +182,83 @@ func ComputeMFCCFromWavWithConfig(path string, cfg Config) ([][]float64, int, in
 }
 
 // ComputeCMVN는 CMVN 통계를 계산한다. stdFloor가 0 이하이면 기본값을 사용한다.
+// invalid input에는 nil 통계를 반환하며, 오류 원인이 필요하면 ComputeCMVNChecked를 사용한다.
 func ComputeCMVN(mfcc [][]float64, stdFloor float64) ([]float64, []float64) {
-	if stdFloor <= 0 {
-		stdFloor = defaultCMVNStdFloor
+	mean, std, err := ComputeCMVNChecked(mfcc, stdFloor)
+	if err != nil {
+		return nil, nil
 	}
-	return cmnMeanStdWithFloor(mfcc, stdFloor)
+	return mean, std
 }
 
-// ApplyCMVN은 CMVN을 적용한다. stdFloor가 0 이하이면 기본값을 사용한다.
-func ApplyCMVN(mfcc [][]float64, mean, std []float64, stdFloor float64) ([]float64, []float64) {
-	if stdFloor <= 0 {
-		stdFloor = defaultCMVNStdFloor
+// ComputeCMVNChecked는 직사각형이고 finite인 MFCC matrix의 CMVN 통계를 계산한다.
+// stdFloor가 0 이하이면 기본값을 사용한다.
+func ComputeCMVNChecked(mfcc [][]float64, stdFloor float64) ([]float64, []float64, error) {
+	resolvedFloor, err := resolveCMVNStdFloor(stdFloor)
+	if err != nil {
+		return nil, nil, err
 	}
-	return applyCMVNWithFloor(mfcc, mean, std, stdFloor)
+	if _, err := validateFeatureMatrix(mfcc); err != nil {
+		return nil, nil, fmt.Errorf("invalid MFCC matrix: %w", err)
+	}
+	mean, std := cmnMeanStdWithFloor(mfcc, resolvedFloor)
+	return mean, std, nil
+}
+
+// ApplyCMVN은 CMVN을 mfcc에 in-place로 적용한다. stdFloor가 0 이하이면 기본값을 사용한다.
+// invalid input은 변경하지 않고 nil 통계를 반환하며, 오류 원인이 필요하면 ApplyCMVNChecked를 사용한다.
+func ApplyCMVN(mfcc [][]float64, mean, std []float64, stdFloor float64) ([]float64, []float64) {
+	resolvedMean, resolvedStd, err := ApplyCMVNChecked(mfcc, mean, std, stdFloor)
+	if err != nil {
+		return nil, nil
+	}
+	return resolvedMean, resolvedStd
+}
+
+// ApplyCMVNChecked는 직사각형이고 finite인 MFCC matrix에 CMVN을 in-place로 적용한다.
+// 제공한 mean/std는 coefficient 수와 같아야 하며 std는 finite한 음이 아닌 값이어야 한다.
+func ApplyCMVNChecked(mfcc [][]float64, mean, std []float64, stdFloor float64) ([]float64, []float64, error) {
+	resolvedFloor, err := resolveCMVNStdFloor(stdFloor)
+	if err != nil {
+		return nil, nil, err
+	}
+	coeffCount, err := validateFeatureMatrix(mfcc)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid MFCC matrix: %w", err)
+	}
+	if err := validateCMVNStats(mean, std, coeffCount); err != nil {
+		return nil, nil, err
+	}
+	resolvedMean, resolvedStd := applyCMVNWithFloor(mfcc, mean, std, resolvedFloor)
+	return resolvedMean, resolvedStd, nil
+}
+
+func resolveCMVNStdFloor(stdFloor float64) (float64, error) {
+	if math.IsNaN(stdFloor) || math.IsInf(stdFloor, 0) {
+		return 0, fmt.Errorf("invalid CMVN std floor: %f", stdFloor)
+	}
+	if stdFloor <= 0 {
+		return defaultCMVNStdFloor, nil
+	}
+	return stdFloor, nil
+}
+
+func validateCMVNStats(mean, std []float64, coeffCount int) error {
+	if len(mean) > 0 && len(mean) != coeffCount {
+		return fmt.Errorf("CMVN mean coefficient count mismatch: got %d, want %d", len(mean), coeffCount)
+	}
+	if len(std) > 0 && len(std) != coeffCount {
+		return fmt.Errorf("CMVN std coefficient count mismatch: got %d, want %d", len(std), coeffCount)
+	}
+	for i, value := range mean {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("non-finite CMVN mean at coeff %d", i)
+		}
+	}
+	for i, value := range std {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return fmt.Errorf("invalid CMVN std at coeff %d", i)
+		}
+	}
+	return nil
 }
