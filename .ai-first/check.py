@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import tomllib
 from pathlib import Path, PurePosixPath
 
 
@@ -23,10 +24,27 @@ TERMINAL_STATUS_VALUE = re.compile(
     r"cancel(?:l)?ed)(?:\s|[.!:;—–-]|$)",
     re.IGNORECASE,
 )
+HEX_DIGEST = re.compile(r"[0-9a-f]{64}")
+COMMIT_REVISION = re.compile(r"[0-9a-f]{40}")
+RELEASE_REVISION = re.compile(
+    r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+)
 
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def aggregate_digest(entries: dict[str, str]) -> str:
+    canonical = json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def safe_lock_key(value: str) -> bool:
+    candidate = PurePosixPath(value)
+    return not (
+        candidate.is_absolute() or ".." in candidate.parts or value in {"", "."}
+    )
 
 
 def safe_relative(root: Path, value: str) -> Path:
@@ -59,6 +77,83 @@ def verify_group(root: Path, group: str, entries: object) -> list[str]:
             failures.append(f"missing {relative}")
         elif digest(path) != expected:
             failures.append(f"drifted {relative}")
+    return failures
+
+
+def verify_lock_contract(root: Path, lock: dict[str, object]) -> list[str]:
+    failures: list[str] = []
+    config_path = root / ".ai-first.toml"
+    try:
+        config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        return [f"invalid .ai-first.toml: {error}"]
+
+    framework = lock.get("framework")
+    if not isinstance(framework, dict):
+        return ["framework must be an object"]
+
+    comparisons = (
+        ("framework.version", framework.get("version"), config.get("framework_version")),
+        (
+            "framework.source_kind",
+            framework.get("source_kind"),
+            config.get("source_kind"),
+        ),
+        (
+            "framework.source_revision",
+            framework.get("source_revision"),
+            config.get("source_revision"),
+        ),
+        ("profiles", lock.get("profiles"), config.get("profiles")),
+    )
+    for label, actual, expected in comparisons:
+        if actual != expected:
+            failures.append(f"{label} does not match .ai-first.toml")
+
+    source_kind = framework.get("source_kind")
+    source_revision = framework.get("source_revision")
+    source_commit = framework.get("source_commit")
+    if source_kind == "development":
+        if source_revision is not None or source_commit is not None:
+            failures.append(
+                "development source requires null source_revision and source_commit"
+            )
+    elif source_kind == "commit":
+        if not isinstance(source_revision, str) or not COMMIT_REVISION.fullmatch(
+            source_revision
+        ):
+            failures.append("commit source_revision must be a full lowercase commit")
+        if source_commit != source_revision:
+            failures.append("commit source_commit must equal source_revision")
+    elif source_kind == "release":
+        if not isinstance(source_revision, str) or not RELEASE_REVISION.fullmatch(
+            source_revision
+        ):
+            failures.append("release source_revision must be a stable version tag")
+        if not isinstance(source_commit, str) or not COMMIT_REVISION.fullmatch(
+            source_commit
+        ):
+            failures.append("release source_commit must be a full lowercase commit")
+    else:
+        failures.append("framework.source_kind is unsupported")
+
+    framework_inputs = lock.get("framework_inputs")
+    valid_inputs: dict[str, str] = {}
+    if not isinstance(framework_inputs, dict) or not framework_inputs:
+        failures.append("framework_inputs must be a non-empty object")
+    else:
+        for relative, expected in sorted(framework_inputs.items()):
+            if not isinstance(relative, str) or not safe_lock_key(relative):
+                failures.append("framework_inputs contains an unsafe path")
+            elif not isinstance(expected, str) or not HEX_DIGEST.fullmatch(expected):
+                failures.append(f"framework_inputs has invalid digest for {relative}")
+            else:
+                valid_inputs[relative] = expected
+        if len(valid_inputs) == len(framework_inputs):
+            expected_digest = aggregate_digest(valid_inputs)
+            if framework.get("digest") != expected_digest:
+                failures.append("framework.digest does not match framework_inputs")
+
     return failures
 
 
@@ -117,8 +212,11 @@ def main() -> int:
     except (OSError, json.JSONDecodeError) as error:
         print(f"ai-first standalone check failed: invalid lock: {error}")
         return 1
+    if not isinstance(lock, dict):
+        print("ai-first standalone check failed: lock root must be an object")
+        return 1
 
-    failures: list[str] = []
+    failures = verify_lock_contract(root, lock)
     if lock.get("schema_version") != 1:
         failures.append("unsupported lock schema")
     failures.extend(
