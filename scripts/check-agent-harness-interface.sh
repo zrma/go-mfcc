@@ -85,8 +85,8 @@ lock = json.loads(Path(".ai-first.lock").read_text(encoding="utf-8"))
 framework = lock.get("framework", {})
 expected = {
     "version": "1.4.0",
-    "source_kind": "commit",
-    "source_revision": "a0d0952b09b09d4ba3288b3e0061e6e885e292fd",
+    "source_kind": "release",
+    "source_revision": "v1.4.0",
     "source_commit": "a0d0952b09b09d4ba3288b3e0061e6e885e292fd",
 }
 for key, value in expected.items():
