@@ -197,7 +197,7 @@ def verify_active_work(root: Path) -> list[str]:
                 if terminal_line is not None:
                     relative = path.relative_to(root).as_posix()
                     failures.append(
-                        "completed active-work packet must be archived or removed: "
+                        "completed active-work packet requires artifact transfer and cleanup: "
                         f"{relative}:{terminal_line}"
                     )
                     break
