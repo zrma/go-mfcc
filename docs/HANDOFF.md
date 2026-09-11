@@ -2,6 +2,10 @@
 
 ## Start Here
 
+적용되는 agent 지침과 권한·공개 경계는 항상 준수한다. 아래 순서는 변경·작업 재개를
+위한 안내다. 설명·조사·리뷰·계획은 관련 자료와 필요한 재현·검증부터 확인하며, 시작
+안내만을 이유로 전체 검사를 실행하지 않는다. 변경 작업의 필수 local gate는 유지한다.
+
 1. `AGENTS.md`와 `docs/agent-harness.md`를 읽는다.
 2. `jj status`와 `jj diff`로 기존 change를 확인한다.
 3. public API 변경이면 `README.md`와 `mfcc/api.go`를 함께 읽는다.
