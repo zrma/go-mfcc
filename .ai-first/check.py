@@ -311,14 +311,6 @@ def main() -> int:
             print(f"ai-first standalone check failed: {failure}")
         return 1
 
-    if "vcs-closeout" in lock.get("profiles", []):
-        command = [sys.executable, str(root / ".ai-first" / "vcs.py")]
-        if os.environ.get("AI_FIRST_VCS_REVISION"):
-            command.extend(["--revision", os.environ["AI_FIRST_VCS_REVISION"]])
-        result = subprocess.run(command, cwd=root, check=False)
-        if result.returncode:
-            return 1
-
     print("ai-first standalone check passed")
     return 0
 

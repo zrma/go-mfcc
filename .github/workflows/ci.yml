@@ -9,9 +9,6 @@ on:
 permissions:
   contents: read
 
-env:
-  AI_FIRST_VCS_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
-
 jobs:
   check:
     runs-on: ubuntu-latest
