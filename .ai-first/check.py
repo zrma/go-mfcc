@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path, PurePosixPath
 
@@ -196,6 +199,8 @@ def verify_interface(root: Path, lock: dict[str, object]) -> list[str]:
         profiles = config["profiles"]
         if not isinstance(profiles, list) or not profiles or not all(isinstance(p, str) for p in profiles):
             raise ValueError("profiles must be a non-empty string array")
+        if "vcs-closeout" in profiles and ("vcs-jj" not in profiles or ".ai-first/vcs.py" not in entries):
+            raise ValueError("vcs-closeout requires vcs-jj and a locked VCS runtime")
         version = config["framework_version"]
         project = config["project"]
         lines = [
@@ -305,6 +310,14 @@ def main() -> int:
         for failure in failures:
             print(f"ai-first standalone check failed: {failure}")
         return 1
+
+    if "vcs-closeout" in lock.get("profiles", []):
+        command = [sys.executable, str(root / ".ai-first" / "vcs.py")]
+        if os.environ.get("AI_FIRST_VCS_REVISION"):
+            command.extend(["--revision", os.environ["AI_FIRST_VCS_REVISION"]])
+        result = subprocess.run(command, cwd=root, check=False)
+        if result.returncode:
+            return 1
 
     print("ai-first standalone check passed")
     return 0
