@@ -106,11 +106,18 @@ def check_closeout(root: Path, target: str, keep: set[str], retired_paths: list[
         if parents != [target]:
             raise StateError("current working copy must have exactly the expected parent")
 
-    records = jj(root, "workspace", "list", "-T", r'name ++ "\0" ++ root ++ "\n"')
+    records = jj(root, "workspace", "list", "-T", r'name ++ "\0" ++ root ++ "\0" ++ target.commit_id() ++ "\n"')
+    rows = [line.split("\0") for line in records.splitlines()]
+    if any(len(row) != 3 for row in rows):
+        raise StateError("workspace root metadata is missing")
+    current = jj(root, "log", "-r", "@", "--no-graph", "-T", "commit_id")
+    current_rows = [row for row in rows if row[2] == current]
     workspaces = {}
-    for line in records.splitlines():
-        name, separator, path = line.partition("\0")
-        if not separator or not path:
+    for name, path, target_id in rows:
+        # jj 0.38 이전 등록은 root가 없다. 현재 사본의 위치만 CLI와 유일한 WC ID로 검증한다.
+        if not path and target_id == current and len(current_rows) == 1:
+            path = jj(root, "root")
+        if not path:
             raise StateError("workspace root metadata is missing")
         workspaces[name] = Path(path).resolve()
     if keep - workspaces.keys():
