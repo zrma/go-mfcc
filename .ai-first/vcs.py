@@ -151,6 +151,31 @@ def check_closeout(root: Path, target: str, keep: set[str], retired_paths: list[
             raise StateError("unclassified Git worktree registrations remain")
     if any(path.exists() or path.is_symlink() for path in retired_paths):
         raise StateError("a task-owned directory marked for retirement still exists")
+    check_retired_hook_references(root, retired_paths)
+
+
+def check_retired_hook_references(root: Path, paths: list[Path]) -> None:
+    if not paths or not (root / ".git").exists():
+        return
+    # worktree의 package prepare도 공통 hooks를 다시 쓸 수 있다. 실행하지 않고 직접 참조만 검사한다.
+    hooks = Path(query(root, "git", "rev-parse", "--git-path", "hooks"))
+    hooks = (root / hooks).resolve()
+    if any(hooks.is_relative_to(path.resolve()) for path in paths):
+        raise StateError("Git hooks configuration still points to a task-owned path")
+    if not hooks.is_dir():
+        return
+    patterns = [str(path.absolute()).encode() for path in paths]
+    for hook in hooks.iterdir():
+        if hook.is_symlink():
+            if any(hook.resolve().is_relative_to(path.resolve()) for path in paths):
+                raise StateError("a Git hook still points to a task-owned path")
+            continue
+        if not hook.is_file():
+            continue
+        if hook.stat().st_size > 1024 * 1024:
+            raise StateError("cannot inspect an oversized Git hook safely")
+        if any(pattern in hook.read_bytes() for pattern in patterns):
+            raise StateError("a Git hook still references a task-owned path; restore the canonical hook before finishing")
 
 
 def workspace_inventory(root: Path) -> dict[str, dict[str, str]]:
